@@ -1,0 +1,355 @@
+---
+title: "Part 3 -- Next steps in rvest"
+author: Dan Turner (dturner@u.northwestern.edu)
+---
+
+```{r run this first}
+library(rvest) # Web scraping
+library(tidyverse) # Data wrangling
+library(RCurl) # Download files from the internet
+
+demo_mode <- TRUE # Skip the the code that takes more than a few minutes to run
+
+```
+
+# Part 3: Next steps -- scraping to identify and fetch data
+
+Now let's scrape some details about each of the films.
+
+## Scraping movie data
+
+If we use the Inspector view on one of the film's pages, we can see that there is an HTML table that floats on the right side with some useful data, like budget and cast. Let's extract that for each of the films we found while scraping the category lists.
+
+For example, the film Airborne (https://en.wikipedia.org/wiki/Airborne_(1993_film) which is set in Cincinnati, Ohio:
+
+```{r}
+
+  # get titles
+  read_html( "https://en.wikipedia.org/wiki/Airborne_(1993_film)" ) %>%
+    html_nodes( "#mw-content-text > div > table.infobox.vevent" ) %>% # directly copied from Inspector view
+    html_table(header = TRUE) %>% # html_table() interprets HTML tables into R dataframes
+    first()
+
+```
+
+## Let's quickly* extract this data for all of our films.
+
+*Only in terms of writing the code. This actually took a couple of hours to run, which is why I saved the results for everyone to load and explore. In fact, I had to run the script a couple of times until it could find all of the pages it was looking for. Luckily, we only crawl pages we need.
+
+A more optimized script would scrape each page it needed just once, since reading the remote HTML is usually the most time consuming part of scraping.
+
+```
+if( !is.na(geo_content$`Release date`[i]) ){ next } # skip rows we've probably crawled
+```
+
+Because almost every film seemed to have an infobox, and most infoboxes had the release date, this seemed like the best way to tell whether we should skip a film/row or not.
+
+```{r message=FALSE, warning=FALSE}
+
+# load the data
+geo_content <- read_rds("geo_content.rds")
+
+# a function to scrape the infobox for films on Wikipedia
+w.infobox <- function( full_link ){
+  
+  # check the url to make sure it isn't 404'd using RCurl
+  if( url.exists( full_link ) == FALSE){
+    return("404") # or, even better, raise an error
+  } else {
+    
+    rm(temp_html, temp_data) # clean slate
+    
+    # download the html and scrape for the infobox
+    temp_html <- read_html( full_link ) %>%
+      html_node( "#mw-content-text > div > table.infobox.vevent" ) # directly copied from Inspector view (node returns first match; nodes returns a list)
+    
+    if(is_empty(temp_html)) { return("no infobox") } # catch when the rule does not find an infobox
+
+    # if we get to this point, we have data in the infobox! let's save it as a dataframe by interpreting the HTML table
+    temp_data <- temp_html %>%
+      html_table(header = TRUE, fill = TRUE ) # html_table() interprets HTML tables into R dataframes
+    }
+
+  return(temp_data)
+  
+}#/w.infobox
+
+# Now we will fetch every infobox and combine it itteratively with our main dataframe
+
+# We could apply this function and get our data faster, but I prefer to loop because I don't want to spike the traffic
+for(i in 1:nrow(geo_content)){
+  
+  if(demo_mode == TRUE){ break }  # this takes a while
+  
+  if(all( !is.null(geo_content$`Release date`[i]),       # don't evaluate release date until we have one
+           !is.na(geo_content$`Release date`[i]) )){ next }# skip rows we've probably crawled
+  
+  print(paste0("#", i, ": ", geo_content$titles[i] )) # status message
+  
+  # build the full url to pass to w.infobox()
+  rel_link <- geo_content$links[i]
+  full_link <- paste0("https://www.wikipedia.org", rel_link)
+  
+  # scrape the infobox
+  infobox <- w.infobox( full_link )
+  
+  if(infobox == "404" | infobox == "no infobox" ) { next } # skip if we can't find the link
+  
+  # setup the output
+  df_vars <- as.list(infobox[,1]) # vars
+  df_vals <- as.list(infobox[,2]) # vals
+  
+  # now that we have the output, let's add this to geo_content
+  infobox <- data.frame(matrix(ncol = length(df_vars), nrow = 1))
+  infobox[1,] <- df_vals
+  colnames(infobox) <- df_vars
+  
+  # merge -- there is no reason this has to be a loop
+  for (col in df_vars){
+    
+    if(nchar(col) == 0) { next } # skip blank columns
+    
+    col <- unlist(col)
+    
+    geo_content[i, col] <- infobox[1, col] # add all the information we can find
+    
+    Sys.sleep(0.5) # pause 1/2 second before scraping the next page
+    
+  }#innerfor
+
+  rm(df_vars, df_vals, infobox, col)
+
+}#outerfor
+rm(i)
+
+# save the data so everyone can just load it
+# saveRDS(geo_content, "geo_content_infoboxes.rds")
+
+```
+
+In the next code chunk, we load the result (it took some time to run) and see how we did.
+
+```{r}
+# load the progress
+geo_content <- read_rds("geo_content_infoboxes.rds")
+
+# what headers did we extract from the infoboxes?
+colnames(geo_content)
+```
+
+Some columns make sense, but others do not. This is because some movie pages have infoboxes that are formatted a little differently.
+
+# Scraping IMDB
+
+## Scraping IMDB movie ratings from text
+
+In the interest of scraping websites other than Wikipedia, let's scrape IMDB for the rating of each movie we can find.
+
+Are films set in California more enjoyable than films set in Minnesota? Probably!
+
+## Error handling
+There are many ways for web scraping to fail. Maybe you can't find a link that your script is supposed to follow, or maybe a link you found is dead (Error 404). You will see there are many levels of error testing in the following code chunk that address these problems. Sometimes I didn't know there would be a problem until I had scraped a few hundred pages!
+
+In the next code chunk, I scan each film's Wikipedia page to look for a link to its page in the Internet Movie Database (IMDB). From IMDB, we will take the film's rating, which is stored in text, not a nicely structured table.
+
+*In the next code chunk, we add a new column to our dataset for the IMDB rating.*
+
+```{r Scrape IMDB ratings, message=FALSE, warning=FALSE}
+# Reduce the dimensions
+infoboxes <- subset(geo_content, select = c(1:24) ) # only the cols that I want
+
+# Scrape the Wikipedia pages for IMDB links and ratings
+# Notice all of the error handling that I had to incorporate! There are many ways for web scraping to fail.
+
+for(i in 1:nrow(infoboxes)) {  
+  
+  if(demo_mode == TRUE){ break }  # this takes a while
+  
+    if(all( !is.null(infoboxes$imdb_rating[i]),       # wait until we have the first rating
+           !is.na(infoboxes$imdb_rating[i]) )){ next }# skip rows we've probably crawled (has rating)
+  
+  rel_url <- infoboxes$links[i] # grab the relative url
+  
+  full_url <- paste0("https://www.wikipedia.org", rel_url) # build the full url
+  
+  ext_urls <- try(read_html( full_url ) %>%
+    html_nodes("a.external.text") %>% # all external links on the page
+    html_attr('href'))
+  
+  if("try-error" %in% class(ext_urls) ){ next } # if no external URLs
+  
+  imdb_url <- first(ext_urls[str_detect(ext_urls, "imdb")]) # first one we find (not ideal)
+  
+  if(any("try-error" %in% class(imdb_url),
+         is.na(imdb_url),
+         url.exists( imdb_url ) == FALSE)){ next } # if no IMDB link in external URLs
+  
+  print(paste0("#", i, ": IMDB page found for ", infoboxes$titles[i])) # status message
+
+  # extract the rating using regex
+  imdb_rating <- read_html( imdb_url ) %>%
+    html_nodes("div.ratingValue") %>% # the rating box, out of 10
+    html_text() %>% #"\n3.2/10" let's use regex to extract "3.2" from this string
+    str_replace_all("[/10\n]" , "") %>% # delete the denominator and new line, if they are there
+    parse_number() # turn the string into a number
+
+  if(is_empty(imdb_rating) == FALSE) {
+        infoboxes[i, "imdb_rating"] <- imdb_rating # if we find a rating, write it
+    } 
+  
+  rm(rel_url, full_url, ext_urls, imdb_url, imdb_rating)
+}
+rm(i)
+
+# Save the results, so you don't have to run the loop yourself
+# saveRDS(infoboxes, "infoboxes_rated.rds") # stopped at #5290
+
+```
+
+
+
+## Uisng tidyverse code to quickly structure the output
+
+How does my hypothesis bear out?
+
+Let's group by state and see what the average rating is across the states.
+
+```{r}
+
+infoboxes <- read_rds("infoboxes_rated.rds")
+
+rating.by.state <- infoboxes %>%
+  filter(!is.na(imdb_rating)) %>% # drop rows where we don't have a rating
+  mutate("state" = str_match(parent_title, ".*\\in\\s(.*)")[, 2] ) %>% # add a "state" col
+  group_by(state) %>%
+  summarise(mean_rating = mean(imdb_rating) )
+
+# peek
+View(rating.by.state)
+```
+
+Now that you have seen what it takes to extract a single number from a webpage, let's extract some spans of text.
+
+
+## Scrape and interpret text (and text-like) data
+
+Say that we want to look for patterns in the scripts for these films. You can imagine testing a hypothesis about whether some linguistic features predict higher ratings, or whether budget or setting leads to higher ratings or earnings. How do we explore that kind of question?
+
+# Scraping IMSDb
+Let's extract some information from the scripts of these films from The Internet Movie Script Database (IMSDb).
+
+First we need to find our films in their database, but luckily they build their film lists using the alphabet. For example, for "A" films, the URL is:
+
+```
+https://www.imsdb.com/alphabetical/A
+```
+
+This is really common, and we can programmatically change the URL to get the next letter of the alphabet if we need to. Alternatively, some websites (like IMSDb) have a list of all pages:
+
+```
+https://www.imsdb.com/all%20scripts/
+```
+
+*Let's scrape this list and see if we can match any films in infoboxes.*
+
+```{r}
+
+# Let's start by getting every link and its text
+imsdb_titles <- read_html( "https://imsdb.com/all-scripts.html" ) %>%
+    html_nodes("td  p  a") %>% # all external links on the page
+    html_text() 
+
+imsdb_links <- read_html( "https://imsdb.com/all-scripts.html" ) %>%
+    html_nodes("td  p  a") %>% # all external links on the page
+    html_attr('href')
+
+infoboxes_scripts <- data.frame("titles" = imsdb_titles, "script" = imsdb_links ) # simple is good
+
+# Now let's intersect our script database with our film database by title
+infoboxes_scripts <- merge.data.frame(infoboxes_scripts, infoboxes, by = "titles")
+
+rm(imsdb_links, imsdb_titles, infoboxes) # cleanup
+```
+
+Now we have links to the pages on the script database website in our main dataframe. Let's write a function that scrapes the scripts.
+
+## Scrape the scripts for movies we found on Wikipedia 
+The links we scraped don't go straight to the scripts; there is an intervening page, for example:
+
+```
+https://www.imsdb.com/Movie%20Scripts/Time%20Machine,%20The%20Script.html
+```
+
+...includes the link. Note that spaces are filled with "%20". This is because spaces are not legal in URLs. Why_not_use_underscores? My theory is that underscores look too much like an underline and thus would be less visible.
+
+```
+<a href="/scripts/Time-Machine,-The.html">Read "Time Machine, The" Script</a>
+```
+
+Using the Inspector view, I extracted this rule just like we did before:
+
+```
+body > table:nth-child(3) > tbody > tr > td:nth-child(3) > table.script-details > tbody > tr:nth-child(2) > td:nth-child(2) > a:nth-child(32)
+```
+
+## Imagine if the rule was just "a".
+
+It would scrape every link on the webpage. We want something like that, but only for the big table. To get every link in that table, I used the very simple rule "td > a", so every link in the table (<td> is a component of a table).
+
+
+```{r}
+
+# convenience function for getting the script link from a imsdb.com page
+script_link <- function( full_url ){
+  
+  if( url.exists( full_url ) == FALSE ){ return(NA) } # return NA if 404
+  
+  the_link <- read_html( full_url ) %>%
+    html_nodes("td > a") %>% # all external links on the page
+    html_attr('href') %>% # get the link
+    na.omit() %>% # remove NA's
+    last() # alternatively, you can use a:last-child in your rule
+  
+  if(!str_detect(the_link, "scripts")){ # then we did not get the right URL
+    the_link <- NA
+  }
+  return(the_link)
+}#/script_link()
+
+# convenience function to scrape the script of a script page
+script_read <- function(rel_url){
+  
+  the_full_url <- paste0("https://www.imsdb.com", rel_url) # build the full url
+  
+  the_full_url <- gsub(" ", "%20", the_full_url) # replace spaces with %20, like the website does
+  
+  the_script_link <- script_link( the_full_url )
+  
+  if( is.na(the_script_link) ){ return(NA) } # return NA if 404
+  
+  the_script_text <- read_html( paste0("https://www.imsdb.com", the_script_link )) %>% # needs full url
+    html_nodes(".scrtext") %>% # all of the text
+    html_text() %>%
+    str_replace_all("[\r\n]" , "") %>% # delete the returns and new lines
+    str_squish() # delete extra spaces
+  
+  the_script_wordcount <- sapply(strsplit(the_script_text, " "), length) # rough token count
+  
+  print(paste0("Scraped ", the_script_wordcount, " words from ", rel_url)) # status message
+  
+  return(the_script_text)
+}
+
+# For example, let's get the script of Big Fish,
+big_fish <- script_read( infoboxes_scripts$script[which(infoboxes_scripts$titles == "Big Fish")] )
+
+word(big_fish, 17, 98) # take a peek at the beginning
+
+```
+
+Now that we have the text, we scrape for practically anything, like named entities, topics, dialog, and so on.
+
+# Wrapping up
+Now there are a few more examples out there of how to scrape the web with R and rvest. I hope it was helpful to practice some web scraping with different types of data and websites. As you have seen, scraping the web can be easy, but also failure-prone. It requires branching logic, error handling, and patience. 
+
+

@@ -1,0 +1,99 @@
+---
+title: "Part 2: Web scraping practice"
+author: Dan Turner (dturner@u.northwestern.edu)
+---
+
+```{r run this first}
+library(rvest) # Web scraping
+library(tidyverse) # Data wrangling
+library(RCurl) # Download files from the internet
+
+```
+
+# Part 2: **Web scraping practice**
+
+## Challenge 1
+Modify the rule below to list the titles of all the blog posts on the first page found at the URL:
+
+```{r Challenge 1 answer}
+
+url <- "https://www.r-bloggers.com/"
+
+#rule <- "body > div > div.wrapper-corporate > div > div > article:nth-child(1) > header > h3"
+
+rule <- "body > div > div.wrapper-corporate > div > div > article > header > h3" # answer
+
+read_html(url) %>% 
+  html_nodes(rule) %>%
+  html_text()
+
+```
+
+
+## Challenge 2
+Modify the rule below to make a dataframe consisting of the titles, links, author, and date. The author and date will require you to use Inspector view to build and test two more rules.
+
+```{r Challenge 2 answer}
+
+url <- "https://www.r-bloggers.com/"
+
+title_rule <- "body > div > div.wrapper-corporate > div > div > article > header > h3 > a"
+
+author_rule <- "body > div > div.wrapper-corporate > div > div > article > header > p > span > a"
+
+date_rule <- "body > div > div.wrapper-corporate > div > div > article > header > p"
+
+
+titles <- read_html(url) %>% 
+  html_nodes(title_rule) %>%
+  html_text()
+
+links <- read_html(url) %>% 
+  html_nodes(title_rule) %>%
+  html_attr('href')
+
+authors <- read_html(url) %>% 
+  html_nodes(author_rule) %>%
+  html_text()
+
+dates <- read_html(url) %>% 
+  html_nodes(date_rule) %>%
+  html_text()
+
+df <- data.frame(titles, links, authors, dates, stringsAsFactors = FALSE)
+
+View(df)
+
+```
+
+
+
+## Challenge 3
+Now that we can extract data from one page, let's make sure we can get every page.
+
+Write a function that lists every page of blog posts.
+
+```{r Challenge 3 sample answer}
+
+# let's find out how many pages there are
+page_rule <- "body > div > div.wrapper-corporate > div > div > a:nth-child(25)"
+
+# the url of the last page has its page number in it
+page.count <- read_html(url) %>% 
+  html_nodes(page_rule) %>%
+  html_text()
+
+# make it numeric
+page.count <- as.numeric(gsub(",","",page.count))
+
+
+# I think this is the most simple solution
+all_the_links <- paste0("https://www.r-bloggers.com/page/", 1:page.count, "/")
+
+all_the_links
+```
+
+If you want to scrape all_the_links, you can now identify the wanted information, write a rule to extract it, then loop all_the_links to build the dataset.
+
+
+
