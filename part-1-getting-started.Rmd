@@ -15,7 +15,7 @@ library(rvest) # Web scraping
 library(tidyverse) # Data wrangling
 library(RCurl) # Downloading files from the internet
 
-demo_mode <- FALSE # Skip the the code that takes more than a few minutes to run
+demo_mode <- TRUE # Skip the the code that takes more than a few minutes to run
 
 ```
 
@@ -44,9 +44,9 @@ Web code is extremely variable in quality and style, and so the first step to ex
 
 ## HTML versus CSS
 
-Most websites use two major file types, HTML and CSS. HTML (hyper text markup language) is a data file that contains code representing text, links to pictures, tables of data, and everything else. CSS (cascading style sheets) contains code that browsers use to visually style the HTML. In the old days, HTML code would have tags for bold <b> and italics <em> and so on, but not anymore. For a long time, it has been best practices to do all styling using CSS classes.
+Most websites use two major file types, HTML and CSS. HTML (hyper text markup language) is a data file that contains code representing text, links to pictures, tables of data, and everything else. CSS (cascading style sheets) contains code that browsers use to visually style the HTML. In the old days, HTML code would have tags for bold <b> and italics <em> and so on, but not anymore. For a long time, it has been best practice to do all styling using CSS.
 
-We can scrape elements of websites using their HTML (hierarchically grouped) OR CSS (stylistically grouped). Advanced users might get use out of xpath as well, but that is beyond the scope of this workshop (sorry).
+We can scrape elements of websites using their HTML (hierarchically grouped) OR CSS (stylistically grouped). Advanced users might get use out of Xpath syntax as well, which provides a more generalized way to select multiple parts of the page simultaneously.
 
 
 ## Rules of scraping
@@ -54,7 +54,7 @@ Because the code for websites is sometimes poorly written, I want to offer some 
 
 Rule 1. Don't scrape what you can download
 Rule 2. Don't scrape what you cannot easily clean
-Rule 3. Convert data into native data types ASAP (from strings)
+Rule 3. Convert data into native data types ASAP (typically from strings)
 
 
 

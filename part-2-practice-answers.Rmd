@@ -90,7 +90,7 @@ page.count <- as.numeric(gsub(",","",page.count))
 # I think this is the most simple solution
 all_the_links <- paste0("https://www.r-bloggers.com/page/", 1:page.count, "/")
 
-all_the_links
+tail(all_the_links)
 ```
 
 If you want to scrape all_the_links, you can now identify the wanted information, write a rule to extract it, then loop all_the_links to build the dataset.
